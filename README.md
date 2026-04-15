@@ -22,15 +22,6 @@ A browser-based 3D dinosaur exploration game built with Three.js. Roam a blocky 
 5. A fact card pops up with a pixel-art portrait and a fun dinosaur fact!
 6. A new dinosaur spawns somewhere in the world after each discovery.
 
-## Dinosaurs
-
-| Dinosaur | Fun Fact |
-|---|---|
-| 🔴 Tyrannosaurus Rex | Bite force of 12,800 lbs — enough to crush a car |
-| 🔵 Triceratops | Had up to 800 teeth and a vivid display frill |
-| 🟡 Brachiosaurus | Taller than a 4-story building; front legs longer than back |
-| 🟠 Velociraptor | Turkey-sized and feathered in real life! |
-| 🟣 Stegosaurus | Brain the size of a walnut; tail spikes called a "thagomizer" |
 
 ## Features
 
