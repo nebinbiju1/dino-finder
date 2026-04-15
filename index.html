@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Dino Finder</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #87CEEB; }
+
+    #crosshair {
+      position: fixed; top: 50%; left: 50%;
+      width: 20px; height: 20px;
+      transform: translate(-50%,-50%);
+      pointer-events: none;
+    }
+    #crosshair::before, #crosshair::after {
+      content: ''; position: absolute;
+      background: rgba(255,255,255,0.85);
+      box-shadow: 0 0 2px rgba(0,0,0,0.8);
+    }
+    #crosshair::before { left:50%; top:0; width:2px; height:100%; transform:translateX(-50%); }
+    #crosshair::after  { top:50%; left:0; height:2px; width:100%; transform:translateY(-50%); }
+
+    #finder {
+      position: fixed; top: 50%; left: 50%;
+      width: 110px; height: 110px;
+      transform: translate(-50%,-50%);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.25s;
+    }
+    #finder.active { opacity: 1; }
+    #finder svg { transform: rotate(-90deg); }
+    .ring-bg { fill: none; stroke: rgba(255,255,255,0.25); stroke-width: 4; }
+    .ring-fg {
+      fill: none; stroke: #FFD700; stroke-width: 4; stroke-linecap: round;
+      stroke-dasharray: 276.46; stroke-dashoffset: 276.46;
+    }
+
+    #fact-card {
+      position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%,-50%) scale(0.85);
+      background: rgba(10,10,10,0.88);
+      border: 2px solid rgba(255,215,0,0.4);
+      border-radius: 14px;
+      padding: 28px 36px;
+      color: #fff;
+      font-family: 'Courier New', monospace;
+      text-align: center;
+      max-width: 400px;
+      width: 90vw;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.4s, transform 0.4s;
+      z-index: 20;
+    }
+    #fact-card.show { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+    #dino-canvas { display: block; margin: 0 auto 14px; image-rendering: pixelated; border-radius: 6px; }
+    #fact-card .dino-name  { font-size: 22px; font-weight: bold; color: #FFD700; margin-bottom: 12px; }
+    #fact-card .dino-fact  { font-size: 14px; line-height: 1.7; opacity: 0.9; }
+    #fact-card .next-hint  { margin-top: 14px; font-size: 11px; opacity: 0.45; }
+
+    #hud {
+      position: fixed; bottom: 16px; left: 50%;
+      transform: translateX(-50%);
+      color: #fff; background: rgba(0,0,0,0.4);
+      padding: 7px 18px; border-radius: 6px;
+      font: 13px 'Courier New', monospace;
+      text-align: center; pointer-events: none; white-space: nowrap;
+    }
+
+    #score {
+      position: fixed; top: 16px; right: 16px;
+      color: #fff; background: rgba(0,0,0,0.4);
+      padding: 7px 14px; border-radius: 6px;
+      font: bold 15px 'Courier New', monospace;
+    }
+
+    #compass {
+      position: fixed; top: 16px; left: 16px;
+      color: #fff; background: rgba(0,0,0,0.4);
+      padding: 7px 12px; border-radius: 6px;
+      font: 13px 'Courier New', monospace;
+      line-height: 1.55;
+    }
+
+    #overlay {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.72);
+      color: #fff; font-family: 'Courier New', monospace;
+      text-align: center; gap: 12px;
+      cursor: pointer; z-index: 100;
+    }
+    #overlay h1 { font-size: 34px; color: #FFD700; }
+    #overlay p  { font-size: 14px; opacity: 0.7; max-width: 340px; line-height: 1.6; }
+    #overlay .start { margin-top: 8px; font-size: 16px; opacity: 0.9; }
+  </style>
+</head>
+<body>
+  <div id="crosshair"></div>
+
+  <div id="finder">
+    <svg viewBox="0 0 100 100" width="110" height="110">
+      <circle class="ring-bg" cx="50" cy="50" r="44"/>
+      <circle class="ring-fg" id="ring" cx="50" cy="50" r="44"/>
+    </svg>
+  </div>
+
+  <div id="fact-card">
+    <canvas id="dino-canvas" width="200" height="110"></canvas>
+    <div class="dino-name"  id="fact-name"></div>
+    <div class="dino-fact"  id="fact-text"></div>
+    <div class="next-hint">A new dinosaur is hiding in the forest...</div>
+  </div>
+
+  <div id="hud">WASD — Move &nbsp;|&nbsp; Mouse — Look &nbsp;|&nbsp; Space — Jump &nbsp;|&nbsp; ESC — Release</div>
+  <div id="score">Found: <span id="count">0</span></div>
+  <div id="compass">Searching...</div>
+
+  <div id="overlay">
+    <h1>Dino Finder</h1>
+    <p>Explore the forest and find hidden dinosaurs.<br>
+       Get close, then keep one fully in your sight to identify it!</p>
+    <p class="start">Click to start</p>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script>
+  'use strict';
+
+  // ── UI refs ────────────────────────────────────────────────────────────────
+  const overlay   = document.getElementById('overlay');
+  const factCard  = document.getElementById('fact-card');
+  const factName  = document.getElementById('fact-name');
+  const factText  = document.getElementById('fact-text');
+  const countEl   = document.getElementById('count');
+  const compassEl = document.getElementById('compass');
+  const finderEl  = document.getElementById('finder');
+  const ringEl    = document.getElementById('ring');
+
+  // ── Scene ──────────────────────────────────────────────────────────────────
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x87CEEB);
+  scene.fog = new THREE.FogExp2(0x87CEEB, 0.015);
+
+  const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, 400);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  document.body.prepend(renderer.domElement);
+
+  scene.add(new THREE.AmbientLight(0xcce8ff, 0.55));
+  const sun = new THREE.DirectionalLight(0xfff4cc, 0.9);
+  sun.position.set(80, 160, 60);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.camera.near = 1; sun.shadow.camera.far = 300;
+  sun.shadow.camera.left = sun.shadow.camera.bottom = -80;
+  sun.shadow.camera.right = sun.shadow.camera.top   =  80;
+  scene.add(sun);
+
+  // ── Instanced terrain helper ───────────────────────────────────────────────
+  const blockGeo = new THREE.BoxGeometry(1, 1, 1);
+  const dummy    = new THREE.Object3D();
+
+  function instanced(geo, mat, positions) {
+    if (!positions.length) return null;
+    const m = new THREE.InstancedMesh(geo, mat, positions.length);
+    m.castShadow = m.receiveShadow = true;
+    positions.forEach(([x, y, z], i) => {
+      dummy.position.set(x + 0.5, y + 0.5, z + 0.5);
+      dummy.updateMatrix();
+      m.setMatrixAt(i, dummy.matrix);
+    });
+    m.instanceMatrix.needsUpdate = true;
+    scene.add(m);
+    return m;
+  }
+
+  // ── Materials ──────────────────────────────────────────────────────────────
+  const grassMat = new THREE.MeshLambertMaterial({ color: 0x55AA28 });
+  const dirtMat  = new THREE.MeshLambertMaterial({ color: 0x8B5E3C });
+  const stoneMat = new THREE.MeshLambertMaterial({ color: 0x8A8A8A });
+  const logMat   = new THREE.MeshLambertMaterial({ color: 0x5C3D1E });
+  const leafA    = new THREE.MeshLambertMaterial({ color: 0x2D7A1A, transparent: true, opacity: 0.93 });
+  const leafB    = new THREE.MeshLambertMaterial({ color: 0x1E6612, transparent: true, opacity: 0.93 });
+  const cloudMat = new THREE.MeshLambertMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.80 });
+  const waterMat = new THREE.MeshLambertMaterial({ color: 0x2266CC, transparent: true, opacity: 0.75 });
+  const sandMat  = new THREE.MeshLambertMaterial({ color: 0xD4C478 });
+
+  // ── Terrain ────────────────────────────────────────────────────────────────
+  const WORLD = 80, HW = WORLD / 2;
+  const heightMap = new Map();
+
+  function noise(x, z) {
+    return Math.round(
+      3.8 * Math.sin(x * 0.11 + 0.30) * Math.cos(z * 0.09 + 0.70) +
+      2.2 * Math.sin(x * 0.06 + 1.80) * Math.cos(z * 0.07 + 2.10) +
+      1.0 * Math.sin(x * 0.21 + 0.90) * Math.cos(z * 0.19 + 1.40) +
+      0.5 * Math.sin(x * 0.42 + 2.50) * Math.cos(z * 0.38 + 0.20)
+    );
+  }
+
+  const gP = [], dP = [], sP = [], wP = [], snP = [];
+  for (let x = -HW; x < HW; x++) {
+    for (let z = -HW; z < HW; z++) {
+      const h = noise(x, z);
+      heightMap.set(`${x},${z}`, h);
+      if (h <= -2) {
+        snP.push([x, h, z]);
+        for (let y = h + 1; y <= 0; y++) wP.push([x, y, z]);
+      } else {
+        gP.push([x, h, z]);
+        for (let y = h - 1; y >= h - 3; y--) dP.push([x, y, z]);
+        for (let y = h - 4; y >= -6;    y--) sP.push([x, y, z]);
+      }
+    }
+  }
+  instanced(blockGeo, grassMat, gP);
+  instanced(blockGeo, dirtMat,  dP);
+  instanced(blockGeo, stoneMat, sP);
+  instanced(blockGeo, sandMat,  snP);
+  instanced(blockGeo, waterMat, wP);
+
+  // ── Trees ──────────────────────────────────────────────────────────────────
+  const lP = [], lfA = [], lfB = [];
+  function addTree(tx, tz) {
+    const h = heightMap.get(`${tx},${tz}`);
+    if (h === undefined || h <= -2) return;
+    const trunk = 4 + Math.floor(Math.random() * 3);
+    for (let y = h + 1; y <= h + trunk; y++) lP.push([tx, y, tz]);
+    const la = Math.random() < 0.5 ? lfA : lfB;
+    const base = h + trunk - 1;
+    for (let ly = base; ly <= base + 3; ly++) {
+      const r = ly >= base + 2 ? 1 : 2;
+      for (let lx = tx - r; lx <= tx + r; lx++)
+        for (let lz = tz - r; lz <= tz + r; lz++) {
+          if (r === 2 && Math.abs(lx-tx)+Math.abs(lz-tz) > 3 && Math.random() < 0.55) continue;
+          la.push([lx, ly, lz]);
+        }
+    }
+    la.push([tx, base + 4, tz]);
+  }
+
+  const tSet = new Set();
+  for (let tries = 0; tSet.size < 180 && tries < 30000; tries++) {
+    const tx = Math.floor(Math.random() * (WORLD-12)) - HW + 6;
+    const tz = Math.floor(Math.random() * (WORLD-12)) - HW + 6;
+    if (Math.abs(tx) < 7 && Math.abs(tz) < 7) continue;
+    let ok = true;
+    for (let dx = -4; dx <= 4 && ok; dx++)
+      for (let dz = -4; dz <= 4 && ok; dz++)
+        if (tSet.has(`${tx+dx},${tz+dz}`)) ok = false;
+    if (ok) { tSet.add(`${tx},${tz}`); addTree(tx, tz); }
+  }
+  instanced(blockGeo, logMat, lP);
+  instanced(blockGeo, leafA,  lfA);
+  instanced(blockGeo, leafB,  lfB);
+
+  // ── Clouds ─────────────────────────────────────────────────────────────────
+  const cGeo = new THREE.BoxGeometry(3, 1.2, 3);
+  const cP = [];
+  for (let i = 0; i < 35; i++) {
+    const cx = Math.random()*220-110, cz = Math.random()*220-110, cy = 34+Math.random()*6;
+    const w = 2+Math.floor(Math.random()*5), d = 1+Math.floor(Math.random()*3);
+    for (let dx = 0; dx < w; dx++)
+      for (let dz = 0; dz < d; dz++)
+        if (Math.random() > 0.2) cP.push([cx+dx*3, cy, cz+dz*3]);
+  }
+  const cloudMesh = new THREE.InstancedMesh(cGeo, cloudMat, cP.length);
+  cP.forEach(([x,y,z], i) => {
+    dummy.position.set(x, y, z); dummy.updateMatrix();
+    cloudMesh.setMatrixAt(i, dummy.matrix);
+  });
+  cloudMesh.instanceMatrix.needsUpdate = true;
+  cloudMesh.castShadow = false;
+  scene.add(cloudMesh);
+
+  // ── Dinosaur block builder ─────────────────────────────────────────────────
+  function bx(group, mat, x, y, z, w, h, d) {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    group.add(mesh);
+  }
+
+  const DINOS = [
+    {
+      name: 'Tyrannosaurus Rex',
+      fact: 'T-Rex had a bite force of 12,800 lbs — enough to crush a car! Its skull was 5 feet long and packed with banana-sized serrated teeth.',
+      color: 0xCC2820,
+      build(s) {
+        const g = new THREE.Group();
+        const M = c => new THREE.MeshLambertMaterial({ color: c });
+        const m=M(0xCC2820),d=M(0x881810),bl=M(0xF8C0A8),ey=M(0xFFD700),ep=M(0x111111),wh=M(0xFFFFC0);
+        // Tail — 3 tapering segments
+        bx(g,d, -s*3.1,s*1.28,0,  s*0.88,s*0.32,s*0.32);
+        bx(g,m, -s*2.2,s*1.5, 0,  s*1.0, s*0.56,s*0.56);
+        bx(g,m, -s*1.2,s*1.75,0,  s*1.1, s*0.88,s*0.88);
+        // Body + peach belly
+        bx(g,m,  0,    s*2.0, 0,  s*2.6, s*1.65,s*1.22);
+        bx(g,bl, 0,    s*1.22,0,  s*2.2, s*0.5, s*1.05);
+        // Spine bumps
+        bx(g,d, -s*0.8,s*2.85,0,  s*0.26,s*0.3, s*1.0);
+        bx(g,d,  s*0.2,s*2.88,0,  s*0.26,s*0.34,s*1.0);
+        bx(g,d,  s*1.1,s*2.85,0,  s*0.26,s*0.3, s*1.0);
+        // Neck
+        bx(g,m,  s*1.3, s*2.6, 0, s*0.65,s*0.85,s*1.02);
+        bx(g,bl, s*1.35,s*2.25,0, s*0.52,s*0.3, s*0.82);
+        // Head
+        bx(g,m,  s*1.88,s*3.12,0, s*1.38,s*1.08,s*0.98);
+        bx(g,d,  s*2.22,s*2.58,0, s*1.05,s*0.35,s*0.88); // upper jaw
+        bx(g,d,  s*2.18,s*2.15,0, s*1.05,s*0.35,s*0.82); // lower jaw
+        // Teeth (2 pairs)
+        bx(g,wh, s*2.15,s*2.5, s*0.3,  s*0.13,s*0.26,s*0.13);
+        bx(g,wh, s*2.15,s*2.5,-s*0.3,  s*0.13,s*0.26,s*0.13);
+        bx(g,wh, s*2.52,s*2.5, s*0.24, s*0.13,s*0.23,s*0.13);
+        bx(g,wh, s*2.52,s*2.5,-s*0.24, s*0.13,s*0.23,s*0.13);
+        // Gold iris + dark pupil
+        bx(g,ey, s*2.38,s*3.22, s*0.4,  s*0.32,s*0.32,s*0.32);
+        bx(g,ey, s*2.38,s*3.22,-s*0.4,  s*0.32,s*0.32,s*0.32);
+        bx(g,ep, s*2.58,s*3.22, s*0.44, s*0.14,s*0.22,s*0.22);
+        bx(g,ep, s*2.58,s*3.22,-s*0.44, s*0.14,s*0.22,s*0.22);
+        // Brow ridges
+        bx(g,d,  s*2.22,s*3.52, s*0.4,  s*0.5,s*0.2,s*0.35);
+        bx(g,d,  s*2.22,s*3.52,-s*0.4,  s*0.5,s*0.2,s*0.35);
+        // Nostrils
+        bx(g,d,  s*2.85,s*2.82, s*0.26, s*0.2,s*0.14,s*0.14);
+        bx(g,d,  s*2.85,s*2.82,-s*0.26, s*0.2,s*0.14,s*0.14);
+        // Tiny arms + claws
+        bx(g,d,  s*1.12,s*2.32, s*0.65, s*0.58,s*0.24,s*0.24);
+        bx(g,d,  s*1.12,s*2.32,-s*0.65, s*0.58,s*0.24,s*0.24);
+        bx(g,wh, s*1.6, s*2.18, s*0.7,  s*0.22,s*0.32,s*0.14);
+        bx(g,wh, s*1.6, s*2.18,-s*0.7,  s*0.22,s*0.32,s*0.14);
+        // Thighs + shins (separate blocks for depth)
+        for (const [sx,sz] of [[.58,.52],[-.4,.52],[.58,-.52],[-.4,-.52]]) {
+          bx(g,m, sx*s,s*1.08,sz*s, s*0.65,s*1.1, s*0.6);
+          bx(g,d, sx*s,s*0.0, sz*s, s*0.55,s*1.05,s*0.5);
+        }
+        // Wide feet + toe claws
+        bx(g,d,  s*0.32,-s*0.12,s*0.65,  s*0.92,s*0.22,s*0.78);
+        bx(g,d, -s*0.65,-s*0.12,s*0.65,  s*0.92,s*0.22,s*0.78);
+        bx(g,d,  s*0.32,-s*0.12,-s*0.65, s*0.92,s*0.22,s*0.78);
+        bx(g,d, -s*0.65,-s*0.12,-s*0.65, s*0.92,s*0.22,s*0.78);
+        bx(g,wh, s*0.88,-s*0.35,s*0.72,  s*0.15,s*0.38,s*0.15);
+        bx(g,wh,-s*0.08,-s*0.35,s*0.72,  s*0.15,s*0.38,s*0.15);
+        bx(g,wh, s*0.88,-s*0.35,-s*0.72, s*0.15,s*0.38,s*0.15);
+        bx(g,wh,-s*0.08,-s*0.35,-s*0.72, s*0.15,s*0.38,s*0.15);
+        return g;
+      }
+    },
+    {
+      name: 'Triceratops',
+      fact: 'Triceratops had up to 800 teeth! Its brilliant frill was likely used for temperature regulation and vivid colour displays to attract mates.',
+      color: 0x2848B8,
+      build(s) {
+        const g = new THREE.Group();
+        const M = c => new THREE.MeshLambertMaterial({ color: c });
+        const m=M(0x2848B8),d=M(0x182878),bl=M(0x9AABE8),fm=M(0xCC2020),hm=M(0xF5D050),bk=M(0xEEE0A0),ey=M(0xCC8800),ep=M(0x111111);
+        // Tail
+        bx(g,d,-s*1.5,s*1.1,0,   s*0.88,s*0.45,s*0.55);
+        bx(g,m,-s*0.65,s*1.2,0,  s*0.92,s*0.62,s*0.72);
+        // Body + belly
+        bx(g,m,0,     s*1.42,0,  s*2.6, s*1.5,s*1.62);
+        bx(g,bl,0,    s*0.9, 0,  s*2.3, s*0.46,s*1.48);
+        // Neck
+        bx(g,m, s*1.35,s*1.82,0, s*0.68,s*0.82,s*1.32);
+        bx(g,bl,s*1.38,s*1.45,0, s*0.56,s*0.32,s*1.08);
+        // Large RED frill (display structure — very visible)
+        bx(g,fm, s*1.0,s*2.2, 0, s*0.42,s*1.62,s*1.88);
+        bx(g,d,  s*1.0,s*3.8, 0, s*0.38,s*0.22,s*1.78); // frill top
+        bx(g,d,  s*1.0,s*0.62,0, s*0.38,s*0.22,s*1.78); // frill bottom
+        // Frill texture rings
+        bx(g,M(0xEE3030),s*1.0,s*2.2,s*0.65, s*0.4,s*1.2,s*0.16);
+        bx(g,M(0xEE3030),s*1.0,s*2.2,-s*0.65,s*0.4,s*1.2,s*0.16);
+        // Head
+        bx(g,m, s*1.88,s*1.98,0, s*1.3, s*1.15,s*1.42);
+        bx(g,bl,s*1.95,s*1.55,0, s*1.1, s*0.38,s*1.22);
+        // Beak (ivory)
+        bx(g,bk,s*2.82,s*1.88,0, s*0.48,s*0.52,s*0.58);
+        // Amber eyes + pupils
+        bx(g,ey,s*2.58,s*2.35,s*0.58,  s*0.28,s*0.28,s*0.28);
+        bx(g,ey,s*2.58,s*2.35,-s*0.58, s*0.28,s*0.28,s*0.28);
+        bx(g,ep,s*2.76,s*2.35,s*0.64,  s*0.14,s*0.2, s*0.2);
+        bx(g,ep,s*2.76,s*2.35,-s*0.64, s*0.14,s*0.2, s*0.2);
+        // 3 golden horns
+        bx(g,hm,s*2.38,s*2.72, s*0.52, s*0.2,s*0.9,s*0.2);
+        bx(g,hm,s*2.38,s*2.72,-s*0.52, s*0.2,s*0.9,s*0.2);
+        bx(g,hm,s*2.95,s*2.38, 0,      s*0.78,s*0.2,s*0.2); // nose horn
+        // Legs (4 stocky)
+        for (const [lx,lz] of [[.72,.62],[.72,-.62],[-.52,.62],[-.52,-.62]]) {
+          bx(g,m, lx*s,s*0.62,lz*s, s*0.58,s*1.18,s*0.58);
+          bx(g,d, lx*s,-s*0.05,lz*s,s*0.62,s*0.22,s*0.68); // hoof
+        }
+        bx(g,d,s*0.45,-s*0.1,0, s*2.6,s*0.18,s*1.3); // ground shadow plate
+        return g;
+      }
+    },
+    {
+      name: 'Brachiosaurus',
+      fact: 'Brachiosaurus was taller than a 4-story building and weighed up to 56 tons! Unlike most dinosaurs its front legs were longer than its back legs.',
+      color: 0xD4A818,
+      build(s) {
+        const g = new THREE.Group();
+        const M = c => new THREE.MeshLambertMaterial({ color: c });
+        const m=M(0xD4A818),d=M(0x886808),bl=M(0xF0D880),ey=M(0x205020),ep=M(0x111111);
+        // Tail
+        bx(g,d,-s*3.2,s*1.42,0, s*0.88,s*0.32,s*0.32);
+        bx(g,d,-s*2.3,s*1.62,0, s*1.0, s*0.5, s*0.5);
+        bx(g,m,-s*1.3,s*1.88,0, s*1.1, s*0.78,s*0.78);
+        // Body + golden belly
+        bx(g,m, 0,   s*2.5, 0,  s*2.7, s*1.7,s*1.42);
+        bx(g,bl,0,   s*1.72,0,  s*2.4, s*0.52,s*1.28);
+        // Body dark bands
+        bx(g,d,-s*0.6,s*2.9,0,  s*0.2, s*1.5, s*1.3);
+        bx(g,d, s*0.6,s*2.9,0,  s*0.2, s*1.5, s*1.3);
+        // Neck (4 stairstepped segs)
+        bx(g,m, s*0.8, s*3.58,0, s*0.68,s*1.42,s*0.62);
+        bx(g,m, s*1.18,s*4.82,0, s*0.62,s*1.22,s*0.56);
+        bx(g,m, s*1.52,s*5.88,0, s*0.56,s*1.08,s*0.5);
+        bx(g,m, s*1.82,s*6.72,0, s*0.52,s*0.88,s*0.46);
+        bx(g,bl,s*1.0, s*4.0, 0, s*0.45,s*3.2, s*0.38);
+        // Head
+        bx(g,m, s*2.08,s*7.28,0, s*0.82,s*0.65,s*0.52);
+        bx(g,d, s*2.18,s*6.92,0, s*0.72,s*0.32,s*0.46);
+        bx(g,d, s*2.58,s*7.68, s*0.18, s*0.22,s*0.18,s*0.18); // nostrils
+        bx(g,d, s*2.58,s*7.68,-s*0.18, s*0.22,s*0.18,s*0.18);
+        bx(g,ey,s*2.42,s*7.42, s*0.25, s*0.24,s*0.24,s*0.24); // deep green eyes
+        bx(g,ey,s*2.42,s*7.42,-s*0.25, s*0.24,s*0.24,s*0.24);
+        bx(g,ep,s*2.6, s*7.42, s*0.28, s*0.12,s*0.18,s*0.18);
+        bx(g,ep,s*2.6, s*7.42,-s*0.28, s*0.12,s*0.18,s*0.18);
+        // 4 column legs (front taller)
+        bx(g,m, s*0.9,s*1.28, s*0.62, s*0.62,s*1.95,s*0.62);
+        bx(g,m, s*0.9,s*1.28,-s*0.62, s*0.62,s*1.95,s*0.62);
+        bx(g,m,-s*0.9,s*1.28, s*0.62, s*0.62,s*1.72,s*0.62);
+        bx(g,m,-s*0.9,s*1.28,-s*0.62, s*0.62,s*1.72,s*0.62);
+        bx(g,d,s*0.6,-s*0.12,0, s*2.5,s*0.2,s*1.3);
+        return g;
+      }
+    },
+    {
+      name: 'Velociraptor',
+      fact: 'Real Velociraptors were only the size of a turkey and had feathers! The movie version was based on Deinonychus. Their sickle claw pinned prey, not slashed it.',
+      color: 0xD85010,
+      build(s) {
+        const g = new THREE.Group();
+        const M = c => new THREE.MeshLambertMaterial({ color: c });
+        const m=M(0xD85010),d=M(0x882808),bl=M(0xF8C880),st=M(0x331808),ey=M(0x22AAFF),ep=M(0x111111),cl=M(0xEEEE50);
+        // Stiff tail
+        bx(g,d,-s*2.2,s*1.0,0,  s*0.88,s*0.2,s*0.2);
+        bx(g,m,-s*1.35,s*1.08,0, s*0.92,s*0.28,s*0.28);
+        bx(g,m,-s*0.45,s*1.18,0, s*0.98,s*0.36,s*0.36);
+        // Body + peach belly + dark dorsal stripe
+        bx(g,m, 0,    s*1.28,0, s*1.72,s*0.95,s*0.82);
+        bx(g,bl,0,    s*0.88,0, s*1.52,s*0.28,s*0.72);
+        bx(g,st,s*0.1,s*1.85,0, s*1.4, s*0.14,s*0.78);
+        // Neck
+        bx(g,m,s*0.95,s*1.72,0, s*0.45,s*0.65,s*0.62);
+        bx(g,m,s*1.28,s*2.22,0, s*0.4, s*0.55,s*0.55);
+        // Head (skull + long snout)
+        bx(g,m, s*1.55,s*2.52,0, s*0.42,s*0.48,s*0.52);
+        bx(g,m, s*1.65,s*2.28,0, s*1.08,s*0.55,s*0.52);
+        bx(g,d, s*1.75,s*2.0, 0, s*0.95,s*0.22,s*0.46);
+        // Vivid blue predator eyes
+        bx(g,ey,s*2.35,s*2.55, s*0.24, s*0.22,s*0.22,s*0.22);
+        bx(g,ey,s*2.35,s*2.55,-s*0.24, s*0.22,s*0.22,s*0.22);
+        bx(g,ep,s*2.52,s*2.55, s*0.27, s*0.1, s*0.16,s*0.16);
+        bx(g,ep,s*2.52,s*2.55,-s*0.27, s*0.1, s*0.16,s*0.16);
+        // Small arms
+        bx(g,d,s*0.65,s*1.55, s*0.45, s*0.45,s*0.2,s*0.2);
+        bx(g,d,s*0.65,s*1.55,-s*0.45, s*0.45,s*0.2,s*0.2);
+        // Large back legs (thigh + shin)
+        for (const [sx,sz] of [[.35,.35],[-.18,.35],[.35,-.35],[-.18,-.35]]) {
+          bx(g,m, sx*s,s*0.72,sz*s, s*0.42,s*1.18,s*0.42);
+          bx(g,d, sx*s,s*0.0, sz*s, s*0.38,s*1.0, s*0.38);
+        }
+        // Feet
+        bx(g,d, s*0.18,-s*0.1, s*0.42, s*0.72,s*0.18,s*0.6);
+        bx(g,d,-s*0.35,-s*0.1, s*0.42, s*0.72,s*0.18,s*0.6);
+        bx(g,d, s*0.18,-s*0.1,-s*0.42, s*0.72,s*0.18,s*0.6);
+        bx(g,d,-s*0.35,-s*0.1,-s*0.42, s*0.72,s*0.18,s*0.6);
+        // Yellow sickle claws (raised)
+        bx(g,cl,s*0.52,-s*0.28, s*0.48, s*0.18,s*0.42,s*0.18);
+        bx(g,cl,-s*0.0,-s*0.28, s*0.48, s*0.18,s*0.42,s*0.18);
+        bx(g,cl,s*0.52,-s*0.28,-s*0.48, s*0.18,s*0.42,s*0.18);
+        bx(g,cl,-s*0.0,-s*0.28,-s*0.48, s*0.18,s*0.42,s*0.18);
+        return g;
+      }
+    },
+    {
+      name: 'Stegosaurus',
+      fact: 'Stegosaurus had a brain the size of a walnut (80g) but had extra nerve clusters near its hips! Its tail spikes (thagomizer) could reach 3 feet long.',
+      color: 0x9020B8,
+      build(s) {
+        const g = new THREE.Group();
+        const M = c => new THREE.MeshLambertMaterial({ color: c });
+        const m=M(0x9020B8),d=M(0x601278),bl=M(0xD070E8),pm=M(0xCC2020),sp=M(0xDD4444),ey=M(0xFFD700),ep=M(0x111111);
+        // Tail
+        bx(g,d,-s*3.2,s*1.05,0, s*0.85,s*0.28,s*0.28);
+        bx(g,d,-s*2.35,s*1.2,0, s*0.95,s*0.45,s*0.45);
+        bx(g,m,-s*1.42,s*1.42,0,s*1.05,s*0.72,s*0.72);
+        // Body + light purple belly
+        bx(g,m, 0,   s*1.55,0,  s*2.65,s*1.38,s*1.28);
+        bx(g,bl,0,   s*0.98,0,  s*2.4, s*0.42,s*1.12);
+        // Neck + small head (low-slung)
+        bx(g,m,s*1.42,s*2.0, 0, s*0.6, s*0.88,s*0.98);
+        bx(g,m,s*1.95,s*1.7, 0, s*0.88,s*0.72,s*0.72);
+        bx(g,d,s*2.08,s*1.38,0, s*0.72,s*0.28,s*0.62);
+        // Gold eyes
+        bx(g,ey,s*2.48,s*1.95, s*0.32, s*0.26,s*0.26,s*0.26);
+        bx(g,ey,s*2.48,s*1.95,-s*0.32, s*0.26,s*0.26,s*0.26);
+        bx(g,ep,s*2.66,s*1.95, s*0.36, s*0.12,s*0.18,s*0.18);
+        bx(g,ep,s*2.66,s*1.95,-s*0.36, s*0.12,s*0.18,s*0.18);
+        // Back plates — 8 RED plates, taller in middle
+        const plX=[-1.35,-0.98,-0.58,-0.18,0.22,0.65,1.02,1.32];
+        const plH=[ 0.48, 0.72, 0.98, 1.12,1.02,0.82,0.60,0.42];
+        plX.forEach((px,i) => {
+          bx(g,pm, px*s,s*(1.95+plH[i]*0.5),(i%2===0?s*0.14:-s*0.14),s*0.16,s*plH[i],s*0.12);
+        });
+        // Legs (4, stocky)
+        for (const [lx,lz] of [[.75,.55],[.75,-.55],[-.62,.55],[-.62,-.55]]) {
+          bx(g,m,  lx*s,s*0.62,lz*s, s*0.52,s*1.25,s*0.52);
+          bx(g,d,  lx*s,-s*0.05,lz*s,s*0.55,s*0.2, s*0.6); // hoof
+        }
+        // Thagomizer — 4 vivid red spikes
+        bx(g,sp,-s*2.75,s*1.55, s*0.32, s*0.16,s*0.72,s*0.16);
+        bx(g,sp,-s*2.75,s*1.55,-s*0.32, s*0.16,s*0.72,s*0.16);
+        bx(g,sp,-s*3.08,s*1.42, s*0.22, s*0.16,s*0.62,s*0.16);
+        bx(g,sp,-s*3.08,s*1.42,-s*0.22, s*0.16,s*0.62,s*0.16);
+        return g;
+      }
+    }
+  ];
+
+  // ── 2D pixel-art dino drawings (for fact card, colors match 3D) ───────────
+  const DINO2D = [
+    // 0: T-Rex — vivid red
+    ctx => {
+      const B='#CC2820',D='#881810',BL='#F8C0A8',W='#FFF8A0',G='#FFD700',E='#111';
+      ctx.fillStyle=D;  ctx.fillRect(0,50,10,20);  ctx.fillRect(8,46,18,26); // tail segs
+      ctx.fillStyle=B;  ctx.fillRect(22,28,108,56);                           // body
+      ctx.fillStyle=BL; ctx.fillRect(28,72,100,10);                           // peach belly
+      ctx.fillStyle=B;  ctx.fillRect(118,16,22,30);                           // neck
+                        ctx.fillRect(134,8,60,46);                            // head
+      ctx.fillStyle=D;  ctx.fillRect(140,48,56,18);                           // lower jaw
+      ctx.fillStyle=W;  ctx.fillRect(150,48,9,12); ctx.fillRect(168,48,9,12);// teeth
+      ctx.fillStyle=B;  ctx.fillRect(112,60,20,10);                           // tiny arm
+      ctx.fillStyle=D;  ctx.fillRect(38,82,24,28); ctx.fillRect(72,82,24,28);// thighs
+                        ctx.fillRect(38,104,22,14);ctx.fillRect(72,104,22,14);// shins
+                        ctx.fillRect(28,112,36,8); ctx.fillRect(62,112,36,8);// feet
+      ctx.fillStyle=G;  ctx.fillRect(164,12,12,12);                           // gold iris
+      ctx.fillStyle=E;  ctx.fillRect(167,14,6,8);                             // pupil
+      ctx.fillStyle=D;  ctx.fillRect(160,10,18,6);                            // brow ridge
+    },
+    // 1: Triceratops — vivid blue + red frill
+    ctx => {
+      const B='#2848B8',D='#182878',BL='#9AABE8',F='#CC2020',H='#F5D050',K='#EEE0A0',G='#CC8800',E='#111';
+      ctx.fillStyle=D;  ctx.fillRect(0,56,20,20);                             // tail
+      ctx.fillStyle=B;  ctx.fillRect(16,34,118,54);                           // body
+      ctx.fillStyle=BL; ctx.fillRect(20,78,112,10);                           // belly
+      ctx.fillStyle=F;  ctx.fillRect(110,4,28,80);                            // RED frill
+      ctx.fillStyle=D;  ctx.fillRect(112,4,24,6);  ctx.fillRect(112,78,24,6);// frill edges
+      ctx.fillStyle=B;  ctx.fillRect(128,38,60,46);                           // head
+      ctx.fillStyle=BL; ctx.fillRect(132,74,54,10);                           // head belly
+      ctx.fillStyle=K;  ctx.fillRect(174,50,22,20);                           // beak
+      ctx.fillStyle=H;  ctx.fillRect(170,12,14,32);ctx.fillRect(178,18,14,26);// horns
+                        ctx.fillRect(183,44,20,14);                           // nose horn
+      ctx.fillStyle=D;  ctx.fillRect(26,86,22,24); ctx.fillRect(62,86,22,24);
+                        ctx.fillRect(96,86,22,24);                            // legs
+      ctx.fillStyle=G;  ctx.fillRect(160,44,12,12);                           // amber eye
+      ctx.fillStyle=E;  ctx.fillRect(163,46,6,8);
+    },
+    // 2: Brachiosaurus — golden yellow
+    ctx => {
+      const B='#D4A818',D='#886808',BL='#F0D880',G='#205020',E='#111';
+      ctx.fillStyle=D;  ctx.fillRect(0,62,16,18);  ctx.fillRect(14,58,16,24);// tail
+      ctx.fillStyle=B;  ctx.fillRect(24,52,94,44);                            // body
+      ctx.fillStyle=BL; ctx.fillRect(28,86,88,10);                            // belly
+      ctx.fillStyle=D;  ctx.fillRect(46,52,6,40);  ctx.fillRect(70,52,6,40); // body bands
+      ctx.fillStyle=B;  ctx.fillRect(104,38,24,20);                           // neck 1
+                        ctx.fillRect(110,22,22,22);                           // neck 2
+                        ctx.fillRect(116,8,20,20);                            // neck 3
+                        ctx.fillRect(130,2,50,24);                            // head
+      ctx.fillStyle=D;  ctx.fillRect(134,22,44,12);                           // jaw
+      ctx.fillStyle=D;  ctx.fillRect(164,4,8,4);   ctx.fillRect(172,4,8,4);  // nostrils
+      ctx.fillStyle=G;  ctx.fillRect(162,6,12,12);                            // green eye
+      ctx.fillStyle=E;  ctx.fillRect(165,8,6,8);
+      ctx.fillStyle=D;  ctx.fillRect(34,94,18,14); ctx.fillRect(60,94,18,14);
+                        ctx.fillRect(84,94,18,14);                            // legs
+      ctx.fillStyle=B;  ctx.fillRect(26,106,80,10);                           // feet
+    },
+    // 3: Velociraptor — vivid orange + blue eyes
+    ctx => {
+      const B='#D85010',D='#882808',BL='#F8C880',ST='#331808',C='#EEEE50',BU='#22AAFF',E='#111';
+      ctx.fillStyle=D;  ctx.fillRect(0,56,10,10);  ctx.fillRect(8,52,22,16); // stiff tail
+      ctx.fillStyle=B;  ctx.fillRect(26,42,88,40);                            // body
+      ctx.fillStyle=BL; ctx.fillRect(30,72,82,10);                            // belly
+      ctx.fillStyle=ST; ctx.fillRect(28,40,86,8);                             // dorsal stripe
+      ctx.fillStyle=B;  ctx.fillRect(100,30,20,22);ctx.fillRect(110,18,18,18);// neck
+                        ctx.fillRect(120,10,64,36);                           // head+snout
+      ctx.fillStyle=D;  ctx.fillRect(126,42,58,14);                           // jaw
+      ctx.fillStyle=B;  ctx.fillRect(96,58,18,10);                            // arm
+      ctx.fillStyle=D;  ctx.fillRect(38,80,20,24); ctx.fillRect(64,80,20,24);// thigh
+                        ctx.fillRect(38,100,18,14);ctx.fillRect(64,100,18,14);// shin
+                        ctx.fillRect(28,108,32,8); ctx.fillRect(56,108,32,8);// feet
+      ctx.fillStyle=C;  ctx.fillRect(30,104,12,12);ctx.fillRect(58,104,12,12);// sickle claws
+      ctx.fillStyle=BU; ctx.fillRect(162,14,12,12);                           // blue eye
+      ctx.fillStyle=E;  ctx.fillRect(165,16,6,8);
+    },
+    // 4: Stegosaurus — vivid purple + red plates
+    ctx => {
+      const B='#9020B8',D='#601278',BL='#D070E8',P='#CC2020',SP='#DD4444',G='#FFD700',E='#111';
+      ctx.fillStyle=D;  ctx.fillRect(0,64,18,18);                             // tail base
+      ctx.fillStyle=SP; ctx.fillRect(4,46,10,22); ctx.fillRect(12,50,10,18); // tail spikes
+                        ctx.fillRect(18,54,10,14);ctx.fillRect(24,58,10,10);
+      ctx.fillStyle=B;  ctx.fillRect(14,52,126,42);                           // body
+      ctx.fillStyle=BL; ctx.fillRect(18,84,120,10);                           // belly
+      ctx.fillStyle=P;  // RED back plates
+      [[22,42],[42,56],[62,66],[78,62],[96,52],[110,40],[122,30]].forEach(([px,ph],i)=>
+        ctx.fillRect(px+(i%2===0?4:0), 10+(66-ph), 14, ph-10));
+      ctx.fillStyle=B;  ctx.fillRect(132,62,52,36);                           // head (low)
+      ctx.fillStyle=D;  ctx.fillRect(136,90,46,10);                           // jaw
+      ctx.fillStyle=D;  ctx.fillRect(22,92,22,18); ctx.fillRect(54,92,22,18);
+                        ctx.fillRect(86,92,22,18); ctx.fillRect(114,92,22,18);// legs
+      ctx.fillStyle=B;  ctx.fillRect(14,108,132,10);                          // feet
+      ctx.fillStyle=G;  ctx.fillRect(166,66,12,12);                           // gold eye
+      ctx.fillStyle=E;  ctx.fillRect(169,68,6,8);
+    }
+  ];
+
+  // ── Game state ─────────────────────────────────────────────────────────────
+  let currentDino  = null;
+  let lockTimer    = 0;
+  const LOCK_TIME  = 2.5;
+  const CIRC       = 2 * Math.PI * 44;   // SVG ring circumference (r=44)
+  let foundCount   = 0;
+  let showingFact  = false;
+  let factTimer    = 0;
+  const FACT_TIME  = 5.0;
+
+  function spawnDino() {
+    if (currentDino) {
+      scene.remove(currentDino.group);
+      if (currentDino.beacon) scene.remove(currentDino.beacon);
+      currentDino = null;
+    }
+    lockTimer = 0;
+    finderEl.classList.remove('active');
+    ringEl.style.strokeDashoffset = CIRC;
+
+    let tx, tz, h, tries = 0;
+    do {
+      tx = Math.floor(Math.random() * (WORLD - 16)) - HW + 8;
+      tz = Math.floor(Math.random() * (WORLD - 16)) - HW + 8;
+      h  = heightMap.get(`${tx},${tz}`) ?? 0;
+      tries++;
+    } while (tries < 300 && (
+      h <= -2 ||                                                    // no water
+      (Math.abs(tx) < 12 && Math.abs(tz) < 12) ||                  // not too close to spawn
+      tSet.has(`${tx},${tz}`) || tSet.has(`${tx+1},${tz}`) ||      // not inside a tree
+      tSet.has(`${tx-1},${tz}`) || tSet.has(`${tx},${tz+1}`) ||
+      tSet.has(`${tx},${tz-1}`)
+    ));
+
+    const typeIndex = Math.floor(Math.random() * DINOS.length);
+    const scale     = 1.8 + Math.random() * 0.7;   // big enough to spot
+    const group     = DINOS[typeIndex].build(scale);
+    const baseY     = h + 1;
+    group.position.set(tx + 0.5, baseY, tz + 0.5);
+    group.rotation.y = Math.random() * Math.PI * 2;
+    scene.add(group);
+
+    // Floating beacon — separate object so it doesn't affect the visibility bbox
+    const topY = new THREE.Box3().setFromObject(group).max.y + 2.5;
+    const beacon = new THREE.Mesh(
+      new THREE.SphereGeometry(0.7, 10, 8),
+      new THREE.MeshBasicMaterial({ color: 0x00FFCC })
+    );
+    beacon.position.set(tx + 0.5, topY, tz + 0.5);
+    scene.add(beacon);
+
+    currentDino = { group, typeIndex, tx, tz, baseY, scale, beacon, topY };
+  }
+
+  // ── Visibility ─────────────────────────────────────────────────────────────
+  const frustum    = new THREE.Frustum();
+  const projMat    = new THREE.Matrix4();
+  const tmpBox     = new THREE.Box3();
+  const tmpSphere  = new THREE.Sphere();
+  const corners    = Array.from({ length: 8 }, () => new THREE.Vector3());
+
+  function isDinoFullyVisible() {
+    if (!currentDino) return false;
+
+    const dist = camera.position.distanceTo(currentDino.group.position);
+    if (dist > 45 || dist < 1.5) return false;
+
+    projMat.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    frustum.setFromProjectionMatrix(projMat);
+
+    tmpBox.setFromObject(currentDino.group);
+    tmpBox.getBoundingSphere(tmpSphere);
+    if (!frustum.intersectsSphere(tmpSphere)) return false;
+
+    // All 8 bounding-box corners must be inside the viewport
+    const mn = tmpBox.min, mx = tmpBox.max;
+    corners[0].set(mn.x, mn.y, mn.z); corners[1].set(mx.x, mn.y, mn.z);
+    corners[2].set(mn.x, mx.y, mn.z); corners[3].set(mx.x, mx.y, mn.z);
+    corners[4].set(mn.x, mn.y, mx.z); corners[5].set(mx.x, mn.y, mx.z);
+    corners[6].set(mn.x, mx.y, mx.z); corners[7].set(mx.x, mx.y, mx.z);
+
+    for (const c of corners) {
+      c.project(camera);
+      if (c.z >= 1 || Math.abs(c.x) > 0.97 || Math.abs(c.y) > 0.97) return false;
+    }
+    return true;
+  }
+
+  function showFact() {
+    if (showingFact) return;
+    showingFact = true;
+    factTimer   = 0;
+    const d = DINOS[currentDino.typeIndex];
+    factName.textContent = d.name;
+    factText.textContent = d.fact;
+    // Draw 2D boxy dino portrait
+    const canvas = document.getElementById('dino-canvas');
+    const ctx    = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#0a1a0a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    DINO2D[currentDino.typeIndex](ctx);
+    factCard.classList.add('show');
+    foundCount++;
+    countEl.textContent = foundCount;
+  }
+
+  function hideFact() {
+    factCard.classList.remove('show');
+    showingFact = false;
+    lockTimer = 0;
+    finderEl.classList.remove('active');
+    ringEl.style.strokeDashoffset = CIRC;
+    setTimeout(spawnDino, 600);
+  }
+
+  // ── Direction hint ─────────────────────────────────────────────────────────
+  function directionHint() {
+    if (!currentDino || showingFact) return;
+    const dp = currentDino.group.position;
+    const dx = dp.x - camera.position.x;
+    const dz = dp.z - camera.position.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    const worldAngle = Math.atan2(dx, -dz);
+    let ra = worldAngle - yaw;
+    ra = ((ra + Math.PI) % (2 * Math.PI)) - Math.PI;
+    let dir;
+    if      (Math.abs(ra) < 0.25)  dir = '↑ Ahead';
+    else if (Math.abs(ra) > 2.9)   dir = '↓ Behind you';
+    else if (ra > 0)                dir = `→ Right ${Math.round(ra * 180 / Math.PI)}°`;
+    else                            dir = `← Left  ${Math.round(-ra * 180 / Math.PI)}°`;
+    compassEl.textContent = `${DINOS[currentDino.typeIndex].name}\n${dir} · ${Math.round(dist)} blocks`;
+  }
+
+  // ── Player ─────────────────────────────────────────────────────────────────
+  const spawnH = heightMap.get('0,0') ?? 0;
+  camera.position.set(0.5, Math.max(spawnH, 0) + 2.7, 0.5);
+
+  let yaw = 0, pitch = 0, vy = 0, onGround = false, locked = false;
+  const keys  = new Set();
+  const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+  const fwd   = new THREE.Vector3();
+  const right = new THREE.Vector3();
+  const mv    = new THREE.Vector3();
+
+  window.addEventListener('keydown', e => {
+    keys.add(e.code);
+    if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))
+      e.preventDefault();
+  });
+  window.addEventListener('keyup', e => keys.delete(e.code));
+
+  document.body.addEventListener('click', () => renderer.domElement.requestPointerLock());
+  document.addEventListener('pointerlockchange', () => {
+    locked = document.pointerLockElement === renderer.domElement;
+    overlay.style.display = locked ? 'none' : 'flex';
+  });
+  document.addEventListener('mousemove', e => {
+    if (!locked) return;
+    yaw   -= e.movementX * 0.0022;
+    pitch  = Math.max(-1.5, Math.min(1.5, pitch - e.movementY * 0.0022));
+  });
+
+  function groundAt(px, pz) {
+    let maxH = -100;
+    const bx = Math.floor(px), bz = Math.floor(pz);
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dz = -1; dz <= 1; dz++) {
+        const h = heightMap.get(`${bx+dx},${bz+dz}`);
+        if (h !== undefined) maxH = Math.max(maxH, Math.max(h, 0) + 1);
+      }
+    return maxH;
+  }
+
+  const SPEED = 7.5, JUMP = 8.0, GRAVITY = -22;
+  const clock = new THREE.Clock();
+  let hintTimer = 0;
+
+  function animate() {
+    requestAnimationFrame(animate);
+    const dt = Math.min(clock.getDelta(), 0.05);
+
+    euler.set(pitch, yaw, 0);
+    camera.quaternion.setFromEuler(euler);
+
+    fwd.set(-Math.sin(yaw), 0, -Math.cos(yaw));
+    right.set(Math.cos(yaw), 0, -Math.sin(yaw));
+    mv.set(0, 0, 0);
+    if (keys.has('KeyW') || keys.has('ArrowUp'))    mv.addScaledVector(fwd,   1);
+    if (keys.has('KeyS') || keys.has('ArrowDown'))  mv.addScaledVector(fwd,  -1);
+    if (keys.has('KeyD') || keys.has('ArrowRight')) mv.addScaledVector(right,  1);
+    if (keys.has('KeyA') || keys.has('ArrowLeft'))  mv.addScaledVector(right, -1);
+    if (mv.lengthSq() > 0) mv.normalize().multiplyScalar(SPEED * dt);
+    camera.position.x += mv.x;
+    camera.position.z += mv.z;
+
+    if (keys.has('Space') && onGround) { vy = JUMP; onGround = false; }
+    vy += GRAVITY * dt;
+    camera.position.y += vy * dt;
+
+    const gh = groundAt(camera.position.x, camera.position.z);
+    if (camera.position.y <= gh + 1.7) { camera.position.y = gh + 1.7; vy = 0; onGround = true; }
+    else onGround = camera.position.y < gh + 1.82;
+
+    camera.position.x = Math.max(-HW+1, Math.min(HW-1, camera.position.x));
+    camera.position.z = Math.max(-HW+1, Math.min(HW-1, camera.position.z));
+
+    // Dino gentle bob + beacon pulse
+    if (currentDino && !showingFact) {
+      currentDino.group.position.y = currentDino.baseY + Math.sin(clock.elapsedTime * 1.2) * 0.08;
+      if (currentDino.beacon) {
+        const beaconDist = camera.position.distanceTo(currentDino.group.position);
+        const closeEnough = beaconDist < 18;          // only glows when nearby
+        currentDino.beacon.visible = closeEnough && lockTimer < 0.3;
+        if (closeEnough) {
+          currentDino.beacon.position.y = currentDino.topY + Math.sin(clock.elapsedTime * 2.5) * 0.6;
+          const pulse = 0.8 + 0.4 * Math.sin(clock.elapsedTime * 4);
+          currentDino.beacon.scale.setScalar(pulse);
+        }
+      }
+    }
+    if (showingFact && currentDino && currentDino.beacon) {
+      currentDino.beacon.visible = false;
+    }
+
+    // Clouds drift
+    cloudMesh.position.x = ((cloudMesh.position.x + 0.3 * dt) % 220);
+
+    // ── Finder logic ──────────────────────────────────────────────────────
+    if (!showingFact && currentDino) {
+      const visible = isDinoFullyVisible();
+
+      if (visible) {
+        lockTimer += dt;
+        const progress = Math.min(lockTimer / LOCK_TIME, 1);
+        ringEl.style.strokeDashoffset = CIRC * (1 - progress);
+        finderEl.classList.add('active');
+        if (lockTimer >= LOCK_TIME) showFact();
+      } else {
+        lockTimer = Math.max(0, lockTimer - dt * 2);
+        ringEl.style.strokeDashoffset = CIRC * (1 - lockTimer / LOCK_TIME);
+        if (lockTimer <= 0) finderEl.classList.remove('active');
+      }
+
+      hintTimer += dt;
+      if (hintTimer > 0.4) { directionHint(); hintTimer = 0; }
+    }
+
+    if (showingFact) {
+      factTimer += dt;
+      if (factTimer >= FACT_TIME) hideFact();
+    }
+
+    renderer.render(scene, camera);
+  }
+
+  spawnDino();
+  animate();
+
+  window.addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+  </script>
+</body>
+</html>
