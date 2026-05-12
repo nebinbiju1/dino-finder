@@ -1,10 +1,12 @@
 # 🦕 Dino Finder
 
-A browser-based 3D dinosaur exploration game built with Three.js. Roam a blocky voxel forest, track down hidden dinosaurs using a compass, and identify them by keeping them fully in your sights!
+[\![Play Now](https://img.shields.io/badge/▶%20Play%20Now-Live%20Demo-brightgreen?style=for-the-badge)](https://nebinbiju1.github.io/dino-finder/)
+
+A browser-based 3D dinosaur exploration game built with Three.js. Roam a blocky voxel forest, track down hidden dinosaurs using a compass, and identify them by keeping them fully in your sights\!
 
 ## Play
 
-**[Open `index.html` directly in any modern browser — no server or install needed.](https://nebinbiju1.github.io/dino-hunter/)**
+**[▶ Open in browser — no install needed](https://nebinbiju1.github.io/dino-finder/)**
 
 ## How to Play
 
@@ -19,7 +21,7 @@ A browser-based 3D dinosaur exploration game built with Three.js. Roam a blocky 
 2. Watch the **compass** (top-left) — it shows the hidden dinosaur's name, direction, and distance.
 3. When you get close, a **teal beacon** will pulse above the dinosaur.
 4. **Keep the dinosaur fully in view** for 2.5 seconds — the golden ring fills up as you lock on.
-5. A fact card pops up with a pixel-art portrait and a fun dinosaur fact!
+5. A fact card pops up with a pixel-art portrait and a fun dinosaur fact\!
 6. A new dinosaur spawns somewhere in the world after each discovery.
 
 
